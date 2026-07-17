@@ -1,7 +1,9 @@
 Currently WIP on deciphering the Ghoul GHB format from Soldier of Fortune
 
 Progress so far:
-Header: Complete
-Animation Clips: Complete
-Tags/Bolt-Ons - WIP
-Geometry - TO-DO
+<br>**Header** - Complete
+<br>**Animation Clips** - Complete
+<br>**Tags/Bolt-Ons** - WIP
+<br>**Geometry** - TO-DO
+
+Assistance in writing this plugin based on the MD3 importer by Vitaly Verhovodov. Also got assistance on the header file from Ned Heller as well as the SoF recompilation to help move things along.
