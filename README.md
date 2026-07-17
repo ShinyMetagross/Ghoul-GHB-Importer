@@ -1,4 +1,4 @@
-Currently WIP on deciphering the Ghoul GHB format from Soldier of Fortune
+Currently WIP on deciphering the Ghoul GHB format from Soldier of Fortune. The intention of writing this is less so to support SoF modding but more so for Samsara Reincarnation development, but that could change.
 
 Progress so far:
 <br>**Header** - Complete
