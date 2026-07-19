@@ -32,6 +32,11 @@ class GHBImporter:
         self.scene.game_settings.material_mode = 'GLSL'
         bpy.ops.object.lamp_add(type='HEMI')
         
+    def generate_Tag_Tree(self, item):
+        tag = bpy.data.objects.new(item.bolton_name, None)
+        bpy.context.scene.objects.link(tag)
+        tag.location = item.global_position
+        
     def __call__(self, filename):
         self.filename = filename
         self.pre_settings()
@@ -50,6 +55,9 @@ class GHBImporter:
             # Now read the path
             fmt.ghoul_name = self.file.read(header.path_length).decode('utf-8', errors='ignore')
             
+            # Is this animated? This does change some behavior in the bolt-on parser
+            fmt.AnimatedModel = fmt.ghoul_name.lower().endswith("gfl")
+            
             # We must now create the object
             mesh_data = bpy.data.meshes.new(fmt.ghoul_name)
             new_object = bpy.data.objects.new(fmt.ghoul_name, mesh_data)
@@ -59,25 +67,24 @@ class GHBImporter:
 
             # Read the extended header
             extHeader = self.unpack(fmt.ExtHeader)
-            
-            new_object.scale = (extHeader.scale, extHeader.scale, extHeader.scale)
-            
-            # Unpack animations
-            # The offset will be the header, followed by the path, and the size of the extended header
-            animationOffset = 0x1C + header.path_length + 24
-            self.file.seek(animationOffset)
-            
+                        
+            # Unpack animations    
             for x in range(extHeader.anim_count):
+                # The first animation has useful info, the subsequent runs do not seem so
+                self.file.seek(file.tell() + 16)
+                      
                 animation = fmt.Animation(self.file)
                 fmt.Animations.append(animation)
                 
             # These are the tags
             unknown1Collection = fmt.Unknown1Collection(file)
-            print("Cursor position at:", hex(file.tell()))
+
+            # The next 30 bytes are probably unimportant
+            file.seek(file.tell() + 30)
             
-            # The next 34 bytes are probably unimportant
-            file.read(34)
-            
-            # This next section is a tree, of sorts
+            # This next section is the tree of tags
+            boltOnTree = fmt.BoltOnTree(self.file, fmt.AnimatedModel)
+            for x in range(boltOnTree.num_children):
+                self.generate_Tag_Tree(boltOnTree.children[x])
 
         self.post_settings()
