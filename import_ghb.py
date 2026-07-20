@@ -35,7 +35,9 @@ class GHBImporter:
     def generate_Tag_Tree(self, item):
         tag = bpy.data.objects.new(item.bolton_name, None)
         bpy.context.scene.objects.link(tag)
-        tag.location = item.global_position
+        tag.location = item.local_position
+        tag.rotation_euler = item.local_rotation
+        #tag.scale = item.local_scale
         
     def __call__(self, filename):
         self.filename = filename
@@ -59,8 +61,7 @@ class GHBImporter:
             fmt.AnimatedModel = fmt.ghoul_name.lower().endswith("gfl")
             
             # We must now create the object
-            mesh_data = bpy.data.meshes.new(fmt.ghoul_name)
-            new_object = bpy.data.objects.new(fmt.ghoul_name, mesh_data)
+            new_object = bpy.data.objects.new(fmt.ghoul_name, None)
             current_scene = bpy.context.scene
             current_scene.objects.link(new_object)    
             current_scene.update()
@@ -84,7 +85,28 @@ class GHBImporter:
             
             # This next section is the tree of tags
             boltOnTree = fmt.BoltOnTree(self.file, fmt.AnimatedModel)
+            
+            # Now we can generate the bolt on tree
             for x in range(boltOnTree.num_children):
                 self.generate_Tag_Tree(boltOnTree.children[x])
+                
+            # Another 12 bytes that are more magic numbers to skip
+            file.seek(file.tell() + 12)
+            
+            # This next section is the tree of tags
+            objectTree = fmt.ObjectTree(self.file)
+            
+            # These do not seem important
+            file.seek(file.tell() + 4)
+            
+            # Let's try building a mesh
+            file.seek(header.data_offset)
+            
+            mesh_data = bpy.data.meshes.new("temp")
+            mesh_obj = bpy.data.objects.new("temp", mesh_data)
+            newMesh = fmt.Mesh(self.file)
+            mesh_data.from_pydata(newMesh.Vertices, [], newMesh.Faces)
+            mesh_data.update()
+            current_scene.objects.link(mesh_obj)
 
         self.post_settings()

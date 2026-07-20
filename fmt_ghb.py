@@ -137,102 +137,272 @@ class BoltOn:
     bolton_length : int             # +0x00: length of the bolton name
     bolton_name : str               # +0x04: bolton name
     flags : bytes                   # +0x04 + bolton_length: Flags
-    
-    # Ghoul Tags used for animated models
-    position_xy = np.empty(2, dtype=float)
-    rotation_norm = np.empty(2, dtype=float)
-    bounding_radius : float
-    global_position = np.empty(3, dtype=float)
-    global_rotation = np.empty(3, dtype=float)
-    
-    # Ghoul Tags from static models
-    local_position = np.empty(3, dtype=float)
-    tag_matrix = np.empty((3, 3))
+    bone_id : int                   # calculate eventually
         
     def __init__(self, file, animated):
         self.bolton_length = int.from_bytes(file.read(4), byteorder='little')
         self.bolton_name = file.read(self.bolton_length).decode('utf-8', errors='ignore')
-        print("BoltOn name:", self.bolton_name)
+        # Appears to be padding
+        file.seek(file.tell() + 4)
+            
+        # Read flags
+        self.flags = struct.unpack('<h', file.read(2))[0]
+        
+        # More padding
+        file.seek(file.tell() + 5)
+        
+        # Init some vectors/matrices
+        self.local_position = np.empty(3, dtype=float) 
+        self.local_scale = np.empty(3, dtype=float)
+        self.local_rotation = np.empty(3, dtype=float)
+        self.inv_rotation = np.empty(3, dtype=float)
+        self.absolute_position = np.empty(3, dtype=float)
+        self.transform_matrix = np.empty((3,4), dtype=float)
+        
+        #print("BoltOn name:", self.bolton_name)
         
         # If the model is animated
         if animated:
-            # Appears to be padding
-            file.seek(file.tell() + 4)
-            
-            # Read flags
-            flags = struct.unpack('<h', file.read(2))[0]
-            
-            # More padding
-            file.seek(file.tell() + 9)
-            
-            # A compressed local matrix, basically 
-            self.position_xy[0] = struct.unpack('<f', file.read(4))[0]
-            self.rotation_norm[0] = struct.unpack('<f', file.read(4))[0]
-            self.rotation_norm[1] = struct.unpack('<f', file.read(4))[0]
-            self.position_xy[1] = struct.unpack('<f', file.read(4))[0]
-            bounding_radius = struct.unpack('<f', file.read(4))[0]
-            
-            # Delimiter
-            file.seek(file.tell() + 4)
-            
-            # XYZ Coords
-            self.global_position[0] = struct.unpack('<f', file.read(4))[0]
-            self.global_position[1] = struct.unpack('<f', file.read(4))[0]
-            self.global_position[2] = struct.unpack('<f', file.read(4))[0]
-            
-            # Euler huh? Pitch, yaw, roll
-            self.global_rotation[0] = struct.unpack('<f', file.read(4))[0]
-            self.global_rotation[1] = struct.unpack('<f', file.read(4))[0]
-            self.global_rotation[2] = struct.unpack('<f', file.read(4))[0]
-            
-            # We don't care about data integrity, so let's skip these next bytes
-            file.seek(file.tell() + 16)
-        else:
-            # Appears to be padding
-            file.seek(file.tell() + 4)
-            
-            # Read flags
-            flags = struct.unpack('<h', file.read(2))[0]
-            
-            # Appears to be more padding
-            file.seek(file.tell() + 5)
-            
-            # Local position
+            # Raw Local Reference Translation (Pre-Matrix Multiplier)
             self.local_position[0] = struct.unpack('<f', file.read(4))[0]
             self.local_position[1] = struct.unpack('<f', file.read(4))[0]
             self.local_position[2] = struct.unpack('<f', file.read(4))[0]
             
-            # Global position
-            self.global_position[0] = struct.unpack('<f', file.read(4))[0]
-            self.global_position[1] = struct.unpack('<f', file.read(4))[0]
-            self.global_position[2] = struct.unpack('<f', file.read(4))[0]
+            # Local Bounding Scale Multipliers 
+            self.local_scale[0] = struct.unpack('<f', file.read(4))[0]
+            self.local_scale[1] = struct.unpack('<f', file.read(4))[0]
+            self.local_scale[2] = struct.unpack('<f', file.read(4))[0]
             
-            # More padding, start matrix. Scales along diagonal
-            file.seek(file.tell() + 5)
+            # Rotation in the form of XYZ
+            self.local_rotation[0] = struct.unpack('<f', file.read(4))[0]
+            self.local_rotation[1] = struct.unpack('<f', file.read(4))[0]
+            self.local_rotation[2] = struct.unpack('<f', file.read(4))[0]
             
-            self.tag_matrix[0][0] = struct.unpack('<f', file.read(4))[0]
-            self.tag_matrix[0][1] = struct.unpack('<f', file.read(4))[0]
-            self.tag_matrix[0][2] = struct.unpack('<f', file.read(4))[0]
+            # Kinematic Data Separator Tag
             file.seek(file.tell() + 4)
             
-            self.tag_matrix[1][0] = struct.unpack('<f', file.read(4))[0]
-            self.tag_matrix[1][1] = struct.unpack('<f', file.read(4))[0]
-            self.tag_matrix[1][2] = struct.unpack('<f', file.read(4))[0]
+            # Runtime Inverse Optimizers (1 / Euler angles) 
+            self.inv_rotation[0] = struct.unpack('<f', file.read(4))[0]
+            self.inv_rotation[1] = struct.unpack('<f', file.read(4))[0]
+            self.inv_rotation[2] = struct.unpack('<f', file.read(4))[0]
+            
+            # Absolute World Pivot Origin Vector
+            self.local_position[0] = struct.unpack('<f', file.read(4))[0]
+            self.local_position[1] = struct.unpack('<f', file.read(4))[0]
+            self.local_position[2] = struct.unpack('<f', file.read(4))[0]
+            
+            # Parent Bone Array Index Number   
+            self.bone_id = int.from_bytes(file.read(4), byteorder='little')/856
+        else:
+            # Local Reference Translation (X, Y, Z Position)
+            self.local_position[0] = struct.unpack('<f', file.read(4))[0]
+            self.local_position[1] = struct.unpack('<f', file.read(4))[0]
+            self.local_position[2] = struct.unpack('<f', file.read(4))[0]
+            
+            # Bounding Box Extents Vector (Width, Length, Height)
+            self.local_scale[0] = struct.unpack('<f', file.read(4))[0]
+            self.local_scale[1] = struct.unpack('<f', file.read(4))[0]
+            self.local_scale[2] = struct.unpack('<f', file.read(4))[0]
+            
+            # Matrix Marker/Flag** (01 20 20 80) 
+            file.seek(file.tell() + 9)
+            
+            # 3x4 Linear Transformation Matrix (Rotation/Basis)
+            self.transform_matrix[0][0] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[0][1] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[0][2] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[0][3] = struct.unpack('<f', file.read(4))[0]
+            
+            self.transform_matrix[1][0] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[1][1] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[1][2] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[1][3] = struct.unpack('<f', file.read(4))[0]
+            
+            self.transform_matrix[2][0] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[2][1] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[2][2] = struct.unpack('<f', file.read(4))[0]
+            self.transform_matrix[2][3] = struct.unpack('<f', file.read(4))[0]
+            
+            # Absolute Reference Translation (X, Y, Z Position)
+            self.absolute_position[0] = struct.unpack('<f', file.read(4))[0]
+            self.absolute_position[1] = struct.unpack('<f', file.read(4))[0]
+            self.absolute_position[2] = struct.unpack('<f', file.read(4))[0]
+            
+            # Matrix Marker/Flag** (01 20 20 80) 
             file.seek(file.tell() + 4)
+     
+# My data suggests that we need a quantity here
+class ObjectTree:
+   num_children : int              # +0x00: number of children in the tree
+   children = []
+   
+   def __init__(self, file):
+        self.num_children = int.from_bytes(file.read(4), byteorder='little')
+        
+        for x in range(self.num_children):
+            newObject = MeshObject(file)
+            self.children.append(MeshObject)
+
+# Data structure for each mesh object
+class MeshObject:
+    object_length : int             # +0x00: length of the object name
+    object_name : str               # +0x04: object name
+    flags : bytes                   # +0x04 + object_length: Flags
+    
+    def __init__(self, file):
+        self.object_length = int.from_bytes(file.read(4), byteorder='little')
+        self.object_name = file.read(self.object_length).decode('utf-8', errors='ignore')
+        
+        #print("Object name:", self.object_name)
+        # Appears to be padding
+        file.seek(file.tell() + 4)
             
-            self.tag_matrix[2][0] = struct.unpack('<f', file.read(4))[0]
-            self.tag_matrix[2][1] = struct.unpack('<f', file.read(4))[0]
-            self.tag_matrix[2][2] = struct.unpack('<f', file.read(4))[0]
+        # Read flags
+        self.flags = struct.unpack('<h', file.read(2))[0]
+        
+        # More padding
+        file.seek(file.tell() + 5)
+        
+        # Init some vectors/matrices
+        self.local_position = np.empty(3, dtype=float) 
+        self.local_scale = np.empty(3, dtype=float)
+        self.local_rotation = np.empty(3, dtype=float)
+        self.derived_offset = np.empty(3, dtype=float) 
+        self.transform_matrix = np.empty((3,3), dtype=float)
+        self.world_reference = np.empty(3, dtype=float) 
+        
+        # Local Translation Vector
+        self.local_position[0] = struct.unpack('<f', file.read(4))[0]
+        self.local_position[1] = struct.unpack('<f', file.read(4))[0]
+        self.local_position[2] = struct.unpack('<f', file.read(4))[0]
+        
+        # Derived offset cache. Not sure about the point of this
+        self.derived_offset[0] = struct.unpack('<f', file.read(4))[0]
+        self.derived_offset[1] = struct.unpack('<f', file.read(4))[0]
+        self.derived_offset[2] = struct.unpack('<f', file.read(4))[0]
+        
+        # More garbage padding
+        file.seek(file.tell() + 5)
+        #print("cursor position:", hex(file.tell()))
+        
+        # 3x3 Linear Transformation Matrix (Rotation/Basis)
+        self.transform_matrix[0][0] = struct.unpack('<f', file.read(4))[0]
+        self.transform_matrix[0][1] = struct.unpack('<f', file.read(4))[0]
+        self.transform_matrix[0][2] = struct.unpack('<f', file.read(4))[0]
+        
+        self.transform_matrix[1][0] = struct.unpack('<f', file.read(4))[0]
+        self.transform_matrix[1][1] = struct.unpack('<f', file.read(4))[0]
+        self.transform_matrix[1][2] = struct.unpack('<f', file.read(4))[0]
+        
+        self.transform_matrix[2][0] = struct.unpack('<f', file.read(4))[0]
+        self.transform_matrix[2][1] = struct.unpack('<f', file.read(4))[0]
+        self.transform_matrix[2][2] = struct.unpack('<f', file.read(4))[0]
+        
+        # More padding
+        file.seek(file.tell() + 4)
+        
+        # World Reference Cache
+        self.local_position[0] = struct.unpack('<f', file.read(4))[0]
+        self.local_position[1] = struct.unpack('<f', file.read(4))[0]
+        self.local_position[2] = struct.unpack('<f', file.read(4))[0]
+        
+        # I don't think the next 42 bytes are important
+        file.seek(file.tell() + 42)
+
+    
+class Mesh:
+    num_submeshes : int
+    Vertices = []
+    Faces = []
+
+    def __init__(self, file):
+    
+        # Padding
+        file.seek(file.tell() + 8)
+        
+        # Mesh sub-object allocation
+        self.num_submeshes = int.from_bytes(file.read(4), byteorder='little')
+        #print("cursor position:", hex(file.tell()))
+        
+        # Mesh triangle positions
+        vertexcount = 4
+        facecount = 2
+        
+        for vert in range(vertexcount):
+            x = struct.unpack('<f', file.read(4))[0]
+            y = struct.unpack('<f', file.read(4))[0]
+            z = struct.unpack('<f', file.read(4))[0]
+            self.Vertices.append((x, y, z))
+                 
+        for vert in range(vertexcount):
+            s = struct.unpack('<f', file.read(4))[0]
+            t = struct.unpack('<f', file.read(4))[0]
             
-            # We can close out the rest of this
-            file.seek(file.tell() + 24)
+        for vert in range(vertexcount):
+            norm_x = struct.unpack('<f', file.read(4))[0]
+            norm_y = struct.unpack('<f', file.read(4))[0]
+            norm_z = struct.unpack('<f', file.read(4))[0]
             
-            #print("Cursor position at:", hex(file.tell()))
+        print("cursor position:", hex(file.tell()))
+            
+        #print("cursor position:", hex(file.tell()))
+        
+        #Not sure what these are
+        file.seek(file.tell() + 4)      
+        
+        # I strongly think these are connected vertices. Some of these get made into quads. Eventually I will split them
+        # up, but for now, let's build the edge loops
+        startpoint = file.tell()
+        stridecount = struct.unpack('<H', file.read(2))[0]  
+        
+        # Used for topology formation
+        edgeCounter = 0
+        num_edgeLoops = 0
+        edgeloops = []
+        
+        # Let's count all of the edge loops right here
+        for s in range(stridecount):
+            value = struct.unpack('<H', file.read(2))[0]
+            # The value can sometimes vary here, but I will just use a catch all
+            if (value > 65500):
+                edgeloops.append(edgeCounter)
+                edgeCounter = 0
+            else:
+                edgeCounter += 1
+                num_edgeLoops += 1
+        
+        # Go back to the data block
+        file.seek(startpoint)
            
+        # Now, for each edge loop, do this:
+        for a in range(num_edgeLoops):
+            counter = edgeloops[a]
             
+            num_quads = counter % 3
+            num_tris = (counter - (4 * num_quads)) // 3
             
-    
-    
+            subFaces = []
+            
+            for f in range(num_quads):
+                vert1 = struct.unpack('<H', file.read(2))[0]
+                vert2 = struct.unpack('<H', file.read(2))[0]
+                vert3 = struct.unpack('<H', file.read(2))[0]
+                vert4 = struct.unpack('<H', file.read(2))[0]
+                subFaces.append((vert1, vert2, vert3, vert4))
+            
+            for f in range(num_tris):
+                vert1 = struct.unpack('<H', file.read(2))[0]
+                vert2 = struct.unpack('<H', file.read(2))[0]
+                vert3 = struct.unpack('<H', file.read(2))[0]
+                subFaces.append((vert1, vert2, vert3))
+            
+            # Start new connected group
+            if edgeCounter > 0:
+                file.seek(file.tell() + 2)
+                edgeCounter -= 1
+        
+
 GHB_MAGIC = 0x198237FE 
 GHB_VERSION = 0x033FB1A3
 GHB_HEADER_SIZE = 0x4A
+            
