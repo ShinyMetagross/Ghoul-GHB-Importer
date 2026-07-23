@@ -475,39 +475,33 @@ class Mesh:
         
         # Now, for each edge loop, do this:
         for a in range(num_edgeLoops):
-            num_quads = edgeloops[a] % 3
-            num_tris = (edgeloops[a] - (4 * num_quads)) // 3
             
-            # Loop breaker
+            # Start new strip
             if(struct.unpack('<H', file.peek(2)[:2])[0] == 65532):
                 file.seek(file.tell() + 2)
-                
-            if(num_quads > 0):
-                for f in range(num_quads):   
-                    vert1 = struct.unpack('<H', file.read(2))[0]
-                    vert2 = struct.unpack('<H', file.read(2))[0]
-                    vert3 = struct.unpack('<H', file.read(2))[0]      
-                    vert4 = struct.unpack('<H', file.read(2))[0]
-                    # Short hand variables
-                    v1 = bmeshobj.verts[vert1]
-                    v2 = bmeshobj.verts[vert2]
-                    v3 = bmeshobj.verts[vert3]
-                    v4 = bmeshobj.verts[vert4]                          
-                    # Generate the face
-                    bmeshobj.faces.new([v1, v2, v3])
-                    bmeshobj.faces.new([v1, v3, v4])
-            
-            if(num_tris > 0):
-                for f in range(num_tris):
-                    vert1 = struct.unpack('<H', file.read(2))[0]
-                    vert2 = struct.unpack('<H', file.read(2))[0]
+
+            # Draw the triangle strip
+            vert1 = struct.unpack('<H', file.read(2))[0]
+            vert2 = struct.unpack('<H', file.read(2))[0]
+            vert3 = struct.unpack('<H', file.read(2))[0]
+            bmeshobj.faces.new([vert1, vert2, vert3])
+
+            flip = False
+            for b in range(3, edgeloops[a]):
+                if(flip == True):
+                    vert1 = edgeloops[a - 1]
+                    vert2 = edgeloops[a - 2]
                     vert3 = struct.unpack('<H', file.read(2))[0]
-                    # Short hand variables
-                    v1 = bmeshobj.verts[vert1]
-                    v2 = bmeshobj.verts[vert2]
-                    v3 = bmeshobj.verts[vert3]
-                    bmeshobj.faces.new([v1, v2, v3])
-        
+                else:
+                    vert1 = edgeloops[a - 2]
+                    vert2 = edgeloops[a - 1]
+                    vert3 = struct.unpack('<H', file.read(2))[0]
+
+                # Flip the flip value to correctly wind
+                flip = not flip
+                # Attach the face
+                bmeshobj.faces.new([vert1, vert2, vert3])   
+      
         bmeshobj.faces.ensure_lookup_table()
         
 class Vertex:
