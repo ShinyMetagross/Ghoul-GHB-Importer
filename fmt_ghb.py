@@ -483,12 +483,9 @@ class Mesh:
             # Draw the triangle strip
             vert1 = struct.unpack('<H', file.read(2))[0]
             vert2 = struct.unpack('<H', file.read(2))[0]
-            vert3 = struct.unpack('<H', file.read(2))[0]
-            bmeshobj.faces.new([vert1, vert2, vert3])
 
-            flip = False
-            for b in range(3, edgeloops[a]):
-                if(flip == True):
+            for b in range(2, edgeloops[a]):
+                if (i % 2 == 0):
                     vert1 = edgeloops[a - 1]
                     vert2 = edgeloops[a - 2]
                     vert3 = struct.unpack('<H', file.read(2))[0]
@@ -497,10 +494,13 @@ class Mesh:
                     vert2 = edgeloops[a - 1]
                     vert3 = struct.unpack('<H', file.read(2))[0]
 
-                # Flip the flip value to correctly wind
-                flip = not flip
+                # Get the proper indices
+                sel_vert1 = bmeshobj.verts[vert1]
+                sel_vert2 = bmeshobj.verts[vert2]
+                sel_vert3 = bmeshobj.verts[vert3]
+                
                 # Attach the face
-                bmeshobj.faces.new([vert1, vert2, vert3])   
+                bmbmeshobj.faces.new([sel_vert1, sel_vert2, sel_vert3])   
       
         bmeshobj.faces.ensure_lookup_table()
         
