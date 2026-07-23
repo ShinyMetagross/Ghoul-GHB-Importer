@@ -2,6 +2,7 @@ from math import pi, sin, cos, atan2, acos
 from .utils import AnyStruct
 import numpy as np
 import struct
+import bmesh
 
 def string_from_bytes(b):
     return b.rstrip(b'\0').decode('utf-8', errors='ignore')
@@ -26,8 +27,30 @@ ExtHeader = AnyStruct('ExtHeader', (
     ('anim_count', 'i'),        # +0x04: this has to be the animation count
 ))
 
+# GFL's behave a little different from GHL's
 AnimatedModel : bool
+# Stack of animations
 Animations = []
+# Where in the raw mesh data the vertex positions begin
+VertexPositionStart : int
+# Where in the raw mesh data the UVs begin
+VertexUVStart : int
+# Where in the raw mesh data the normals begin
+VertexNormalStart : int
+# Seems to have some relation to the amount of edge data but not positive
+StrideCountLocation : int
+# Edge loops/triangle strips. I have a strong feeling 0xFFFC marks new triangle strips
+EdgeLoopStart : int
+# Appears to be some kind of lookup table when actually building the vertices
+TrueVertexArrayStart: int
+# Apparently uses single values? Weird stuff, man
+SingleVertexArrayStart: int
+# We need to track vertex positions, since not every vertex is in the position array
+TotalVertexPositions : int
+# This is the number of UV coordinates
+TotalVertexUVs : int
+# This is the number of normals
+TotalVertexNormals : int
 
 # We'll parse these a little differently
 class Animation:
@@ -248,6 +271,7 @@ class MeshObject:
     object_length : int             # +0x00: length of the object name
     object_name : str               # +0x04: object name
     flags : bytes                   # +0x04 + object_length: Flags
+    identifier : int                # This represents an id of the mesh object
     
     def __init__(self, file):
         self.object_length = int.from_bytes(file.read(4), byteorder='little')
@@ -306,101 +330,191 @@ class MeshObject:
         self.local_position[1] = struct.unpack('<f', file.read(4))[0]
         self.local_position[2] = struct.unpack('<f', file.read(4))[0]
         
-        # I don't think the next 42 bytes are important
-        file.seek(file.tell() + 42)
+        # I don't think the next 12 bytes are important
+        file.seek(file.tell() + 26)
+        
+        # I believe this is the id of the mesh object
+        self.identifier = int.from_bytes(file.read(4), byteorder='little')
+        #print("mesh id is:", self.identifier)
+        
+        # These I doubt to be important
+        file.seek(file.tell() + 12)
 
     
 class Mesh:
     num_submeshes : int
     Vertices = []
+    Positions = []
+    UVs = []
+    Normals = []
     Faces = []
 
-    def __init__(self, file):
-    
-        # Padding
-        file.seek(file.tell() + 8)
+    def __init__(self, file, dataoffset, bmeshobj):
         
         # Mesh sub-object allocation
-        self.num_submeshes = int.from_bytes(file.read(4), byteorder='little')
+        #self.num_submeshes = int.from_bytes(file.read(4), byteorder='little')
         #print("cursor position:", hex(file.tell()))
         
-        # Mesh triangle positions
-        vertexcount = 4
-        facecount = 2
-        
-        for vert in range(vertexcount):
+        # Move to the vertex position array
+        file.seek(dataoffset + VertexPositionStart)
+        for vert in range(TotalVertexPositions):   
+            # Get the position
             x = struct.unpack('<f', file.read(4))[0]
             y = struct.unpack('<f', file.read(4))[0]
             z = struct.unpack('<f', file.read(4))[0]
-            self.Vertices.append((x, y, z))
-                 
-        for vert in range(vertexcount):
-            s = struct.unpack('<f', file.read(4))[0]
-            t = struct.unpack('<f', file.read(4))[0]
+            pos = (x, y, z)
+            self.Positions.append(pos)
             
-        for vert in range(vertexcount):
+        # Move to the UV array
+        file.seek(dataoffset + VertexUVStart) 
+        for vert in range(TotalVertexUVs): 
+            # Get the UV Coordinates
+            u = struct.unpack('<f', file.read(4))[0]
+            v = struct.unpack('<f', file.read(4))[0]
+            uv = (u, v)
+            self.UVs.append(uv)
+        
+        # Move to the normals array
+        file.seek(dataoffset + VertexNormalStart)        
+        for vert in range(TotalVertexNormals): 
+            # Get the normal
             norm_x = struct.unpack('<f', file.read(4))[0]
             norm_y = struct.unpack('<f', file.read(4))[0]
             norm_z = struct.unpack('<f', file.read(4))[0]
-            
-        print("cursor position:", hex(file.tell()))
-            
-        #print("cursor position:", hex(file.tell()))
-        
-        #Not sure what these are
-        file.seek(file.tell() + 4)      
-        
-        # I strongly think these are connected vertices. Some of these get made into quads. Eventually I will split them
-        # up, but for now, let's build the edge loops
-        startpoint = file.tell()
-        stridecount = struct.unpack('<H', file.read(2))[0]  
+            normal = (norm_x, norm_y, norm_z)
+            self.Normals.append(normal)
+
+        # Move to the normals array
+        file.seek(dataoffset + StrideCountLocation)     
         
         # Used for topology formation
-        edgeCounter = 0
         num_edgeLoops = 0
-        edgeloops = []
+        edgeloops = []        
+
+        file.seek(dataoffset + EdgeLoopStart)
+
+        #Let's count all of the edge loops right here
+        edgeBlock = (TrueVertexArrayStart - EdgeLoopStart) // 2
         
-        # Let's count all of the edge loops right here
-        for s in range(stridecount):
+        for s in range(edgeBlock):
+            # Check for terminator bytes. In some cases these appear and I can tell you they are useless
+            terminator = int.from_bytes(file.peek(4)[:4], byteorder='little') == 0
+            index = -1
             value = struct.unpack('<H', file.read(2))[0]
-            # The value can sometimes vary here, but I will just use a catch all
-            if (value > 65500):
-                edgeloops.append(edgeCounter)
-                edgeCounter = 0
-            else:
-                edgeCounter += 1
+            #The value can sometimes vary here, but I will just use a catch all
+            if (value == 65532):
+                edgeloops.append(0)
                 num_edgeLoops += 1
+                index += 1
+            elif (value == 65535):
+                break
+            elif (terminator == False):
+                edgeloops[index] += 1
+            else:
+                file.seek(file.tell() + 4)
+                
+        # This is the true vertex array
+        file.seek(dataoffset + TrueVertexArrayStart)  
+        for s in range((SingleVertexArrayStart - TrueVertexArrayStart) // 6):
+            value = struct.unpack('<h', file.read(2))[0]
+            # Get the position of the actual vertex
+            if(value < 0):
+                index = (abs(value) - 1) % TotalVertexPositions
+                final_pos = self.Positions[index]
+            else:
+                index = value % TotalVertexPositions
+                final_pos = self.Positions[index]
+                
+            value = struct.unpack('<h', file.read(2))[0]
+            # Get the UV of the actual vertex
+            if(value < 0):
+                index = (abs(value) - 1) % TotalVertexUVs
+                final_uv = self.UVs[index]
+            else:
+                index = value % TotalVertexUVs
+                final_uv = self.UVs[index]
+                
+            # Get the normal of the actual vertex
+            value = struct.unpack('<h', file.read(2))[0]
+            if(value < 0):
+                index = (abs(value) - 1) % TotalVertexNormals
+                final_norm = self.Normals[index]
+            else:
+                index = value % TotalVertexNormals
+                final_norm = self.Normals[index]
+            
+            # Now we can finally create the true vertices
+            self.Vertices.append(Vertex(final_pos, final_uv, final_norm))
+            bmeshobj.verts.new(final_pos) 
         
-        # Go back to the data block
-        file.seek(startpoint)
-           
+        # Now we must also do the single's array
+#        while(file.peek(1) != b''):
+#            value = struct.unpack('B', file.read(1))[0]
+#            # Get the position of the actual vertex
+#            index = value % TotalVertexPositions
+#            final_pos = self.Positions[index]
+                
+#            value = struct.unpack('B', file.read(1))[0]
+            # Get the UV of the actual vertex
+#            index = value % TotalVertexUVs
+#            final_uv = self.UVs[index]
+                
+            # Get the normal of the actual vertex
+#            value = struct.unpack('B', file.read(1))[0]
+#            index = value % TotalVertexNormals
+#            final_norm = self.Normals[index]
+                
+            # Now we can finally create the true vertices
+#            self.Vertices.append(Vertex(final_pos, final_uv, final_norm))
+#            bmeshobj.verts.new(final_pos) 
+         
+        bmeshobj.verts.ensure_lookup_table()
+               
+        # Go back to the start      
+        file.seek(dataoffset + EdgeLoopStart)  
+        
         # Now, for each edge loop, do this:
         for a in range(num_edgeLoops):
-            counter = edgeloops[a]
+            num_quads = edgeloops[a] % 3
+            num_tris = (edgeloops[a] - (4 * num_quads)) // 3
             
-            num_quads = counter % 3
-            num_tris = (counter - (4 * num_quads)) // 3
-            
-            subFaces = []
-            
-            for f in range(num_quads):
-                vert1 = struct.unpack('<H', file.read(2))[0]
-                vert2 = struct.unpack('<H', file.read(2))[0]
-                vert3 = struct.unpack('<H', file.read(2))[0]
-                vert4 = struct.unpack('<H', file.read(2))[0]
-                subFaces.append((vert1, vert2, vert3, vert4))
-            
-            for f in range(num_tris):
-                vert1 = struct.unpack('<H', file.read(2))[0]
-                vert2 = struct.unpack('<H', file.read(2))[0]
-                vert3 = struct.unpack('<H', file.read(2))[0]
-                subFaces.append((vert1, vert2, vert3))
-            
-            # Start new connected group
-            if edgeCounter > 0:
+            # Loop breaker
+            if(struct.unpack('<H', file.peek(2)[:2])[0] == 65532):
                 file.seek(file.tell() + 2)
-                edgeCounter -= 1
+                
+            if(num_quads > 0):
+                for f in range(num_quads):   
+                    vert1 = struct.unpack('<H', file.read(2))[0]
+                    vert2 = struct.unpack('<H', file.read(2))[0]
+                    vert3 = struct.unpack('<H', file.read(2))[0]      
+                    vert4 = struct.unpack('<H', file.read(2))[0]
+                    # Short hand variables
+                    v1 = bmeshobj.verts[vert1]
+                    v2 = bmeshobj.verts[vert2]
+                    v3 = bmeshobj.verts[vert3]
+                    v4 = bmeshobj.verts[vert4]                          
+                    # Generate the face
+                    bmeshobj.faces.new([v1, v2, v3])
+                    bmeshobj.faces.new([v1, v3, v4])
+            
+            if(num_tris > 0):
+                for f in range(num_tris):
+                    vert1 = struct.unpack('<H', file.read(2))[0]
+                    vert2 = struct.unpack('<H', file.read(2))[0]
+                    vert3 = struct.unpack('<H', file.read(2))[0]
+                    # Short hand variables
+                    v1 = bmeshobj.verts[vert1]
+                    v2 = bmeshobj.verts[vert2]
+                    v3 = bmeshobj.verts[vert3]
+                    bmeshobj.faces.new([v1, v2, v3])
         
+        bmeshobj.faces.ensure_lookup_table()
+        
+class Vertex:
+    def __init__(self, vert_pos, vert_uv, vert_normal):
+        self.position = vert_pos
+        self.uv = vert_uv
+        self.normal = vert_normal
 
 GHB_MAGIC = 0x198237FE 
 GHB_VERSION = 0x033FB1A3

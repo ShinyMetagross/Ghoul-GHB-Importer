@@ -2,6 +2,7 @@ import bpy
 import mathutils
 import os.path
 import struct
+import bmesh
 
 from . import fmt_ghb as fmt
 
@@ -99,14 +100,32 @@ class GHBImporter:
             # These do not seem important
             file.seek(file.tell() + 4)
             
+            # Now skipping these bytes, it goes to the vertex start in the mesh data
+            file.seek(file.tell() + 52)
+            fmt.VertexPositionStart = int.from_bytes(file.read(4), byteorder='little')
+            fmt.VertexUVStart = int.from_bytes(file.read(4), byteorder='little')
+            fmt.VertexNormalStart = int.from_bytes(file.read(4), byteorder='little')
+            # The 4 bytes after the normal array seem to always be 0. That can't be useful
+            fmt.StrideCountLocation = int.from_bytes(file.read(4), byteorder='little') + 4
+            fmt.EdgeLoopStart = int.from_bytes(file.read(4), byteorder='little')
+            fmt.TrueVertexArrayStart = int.from_bytes(file.read(4), byteorder='little')
+            fmt.SingleVertexArrayStart = int.from_bytes(file.read(4), byteorder='little')
+            fmt.TotalVertexPositions = (fmt.VertexUVStart - fmt.VertexPositionStart) // 12
+            fmt.TotalVertexUVs = (fmt.VertexNormalStart - fmt.VertexUVStart) // 8
+            fmt.TotalVertexNormals = (fmt.SingleVertexArrayStart - fmt.VertexNormalStart) // 12
             # Let's try building a mesh
-            file.seek(header.data_offset)
             
-            mesh_data = bpy.data.meshes.new("temp")
-            mesh_obj = bpy.data.objects.new("temp", mesh_data)
-            newMesh = fmt.Mesh(self.file)
-            mesh_data.from_pydata(newMesh.Vertices, [], newMesh.Faces)
-            mesh_data.update()
-            current_scene.objects.link(mesh_obj)
+            for x in range(1):
+                mesh = bpy.data.meshes.new(name="MyNewMesh")
+                obj = bpy.data.objects.new(name="MyNewObject", object_data=mesh)
+                current_scene.objects.link(obj)
+                current_scene.objects.active = obj
+                obj.select = True
+                bm = bmesh.new()
+                newMesh = fmt.Mesh(self.file, header.data_offset, bm)
+                bm.faces.ensure_lookup_table()
+                bm.to_mesh(mesh)
+                bm.free()
+                mesh.update()  
 
         self.post_settings()
