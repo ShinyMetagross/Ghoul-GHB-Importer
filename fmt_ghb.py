@@ -484,23 +484,20 @@ class Mesh:
             vert1 = struct.unpack('<H', file.read(2))[0]
             vert2 = struct.unpack('<H', file.read(2))[0]
 
+            print("edge loop count is:", edgeloops[a])
             for b in range(2, edgeloops[a]):
-                if (i % 2 == 0):
-                    vert1 = edgeloops[a - 1]
-                    vert2 = edgeloops[a - 2]
-                    vert3 = struct.unpack('<H', file.read(2))[0]
+                if (b % 2 == 0):
+                    print("b value is:", b)
+                    vert1 = bmeshobj.verts[b - 1]
+                    vert2 = bmeshobj.verts[b - 2]
+                    vert3 = bmeshobj.verts[struct.unpack('<H', file.read(2))[0]]
                 else:
-                    vert1 = edgeloops[a - 2]
-                    vert2 = edgeloops[a - 1]
-                    vert3 = struct.unpack('<H', file.read(2))[0]
+                    vert1 = bmeshobj.verts[b - 2]
+                    vert2 = bmeshobj.verts[b - 1]
+                    vert3 = bmeshobj.verts[struct.unpack('<H', file.read(2))[0]]
 
-                # Get the proper indices
-                sel_vert1 = bmeshobj.verts[vert1]
-                sel_vert2 = bmeshobj.verts[vert2]
-                sel_vert3 = bmeshobj.verts[vert3]
-                
                 # Attach the face
-                bmbmeshobj.faces.new([sel_vert1, sel_vert2, sel_vert3])   
+                bmeshobj.faces.new([vert1, vert2, vert3])   
       
         bmeshobj.faces.ensure_lookup_table()
         
