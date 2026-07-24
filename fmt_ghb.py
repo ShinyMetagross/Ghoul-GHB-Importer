@@ -383,37 +383,8 @@ class Mesh:
             norm_z = struct.unpack('<f', file.read(4))[0]
             normal = (norm_x, norm_y, norm_z)
             self.Normals.append(normal)
-
-        # Move to the normals array
-        file.seek(dataoffset + StrideCountLocation)     
-        
-        # Used for topology formation
-        num_edgeLoops = 0
-        edgeloops = []        
-
-        file.seek(dataoffset + EdgeLoopStart)
-
-        #Let's count all of the edge loops right here
-        edgeBlock = (TrueVertexArrayStart - EdgeLoopStart) // 2
-        
-        for s in range(edgeBlock):
-            # Check for terminator bytes. In some cases these appear and I can tell you they are useless
-            terminator = int.from_bytes(file.peek(4)[:4], byteorder='little') == 0
-            index = -1
-            value = struct.unpack('<H', file.read(2))[0]
-            #The value can sometimes vary here, but I will just use a catch all
-            if (value == 65532):
-                edgeloops.append(0)
-                num_edgeLoops += 1
-                index += 1
-            elif (value == 65535):
-                break
-            elif (terminator == False):
-                edgeloops[index] += 1
-            else:
-                file.seek(file.tell() + 4)
-                
-        # This is the true vertex array
+     
+        # This is the true vertex array, we draw all the vertices here
         file.seek(dataoffset + TrueVertexArrayStart)  
         for s in range((SingleVertexArrayStart - TrueVertexArrayStart) // 6):
             value = struct.unpack('<h', file.read(2))[0]
@@ -446,6 +417,9 @@ class Mesh:
             # Now we can finally create the true vertices
             self.Vertices.append(Vertex(final_pos, final_uv, final_norm))
             bmeshobj.verts.new(final_pos) 
+          
+        # We need to update the vertex table
+        bmeshobj.verts.ensure_lookup_table()
         
         # Now we must also do the single's array
 #        while(file.peek(1) != b''):
@@ -467,38 +441,44 @@ class Mesh:
             # Now we can finally create the true vertices
 #            self.Vertices.append(Vertex(final_pos, final_uv, final_norm))
 #            bmeshobj.verts.new(final_pos) 
-         
-        bmeshobj.verts.ensure_lookup_table()
-               
-        # Go back to the start      
-        file.seek(dataoffset + EdgeLoopStart)  
+
+        # Here is where we will draw the edges
+        file.seek(dataoffset + EdgeLoopStart)
+
+        # Not sure what this is, seems to be a memory allocation of sorts. Seems kinda useless, though
+        file.seek(dataoffset + StrideCountLocation)     
         
-        # Now, for each edge loop, do this:
-        for a in range(num_edgeLoops):
-            
-            # Start new strip
-            if(struct.unpack('<H', file.peek(2)[:2])[0] == 65532):
-                file.seek(file.tell() + 2)
+        # Used for topology formation
+        faceIndices = []
 
-            # Draw the triangle strip
-            vert1 = struct.unpack('<H', file.read(2))[0]
-            vert2 = struct.unpack('<H', file.read(2))[0]
-
-            print("edge loop count is:", edgeloops[a])
-            for b in range(2, edgeloops[a]):
-                if (b % 2 == 0):
-                    print("b value is:", b)
-                    vert1 = bmeshobj.verts[b - 1]
-                    vert2 = bmeshobj.verts[b - 2]
-                    vert3 = bmeshobj.verts[struct.unpack('<H', file.read(2))[0]]
+        # Let's count all of the edge loops right here
+        edgeBlock = (TrueVertexArrayStart - EdgeLoopStart) // 2
+        
+        # Need a tracker, here
+        stripTracker = 0
+        # Let's parse the amount of vertices that appear in each block. We should put them in an array
+        for s in range(edgeBlock):   
+            # Start the triangle strip here
+            value = struct.unpack('<H', file.read(2))[0]
+            if (value == 65532):
+                stripTracker = 0
+                faceIndices = []
+                continue
+            else:
+                stripTracker += 1
+                faceIndices.append(value)
+                
+            # Now begin drawing faces at this point
+            if(stripTracker > 2):
+                v1 = bmeshobj.verts[faceIndices[stripTracker - 1]]
+                v2 = bmeshobj.verts[faceIndices[stripTracker - 2]]  
+                v3 = bmeshobj.verts[faceIndices[stripTracker]]
+                
+                if(stripTracker % 2 == 0):
+                    bmeshobj.faces.new([v1, v2, v3])   
                 else:
-                    vert1 = bmeshobj.verts[b - 2]
-                    vert2 = bmeshobj.verts[b - 1]
-                    vert3 = bmeshobj.verts[struct.unpack('<H', file.read(2))[0]]
-
-                # Attach the face
-                bmeshobj.faces.new([vert1, vert2, vert3])   
-      
+                    bmeshobj.faces.new([v1, v3, v2]) 
+            
         bmeshobj.faces.ensure_lookup_table()
         
 class Vertex:
